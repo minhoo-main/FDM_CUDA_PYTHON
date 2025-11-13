@@ -58,6 +58,13 @@ class ImprovedGPUADISolver(FDMSolver2D):
         if self.use_gpu and product is not None:
             self._precompute_gpu_meshes()
 
+        # 관찰일을 time step index로 사전 변환
+        self.obs_time_indices = []
+        if product is not None and hasattr(product, 'observation_dates'):
+            for obs_date in product.observation_dates:
+                idx = int(np.argmin(np.abs(self.grid.t - obs_date)))
+                self.obs_time_indices.append(idx)
+
     def _precompute_coefficients(self):
         """ADI 계수를 GPU 메모리에 미리 계산"""
         xp = self.xp
@@ -111,6 +118,9 @@ class ImprovedGPUADISolver(FDMSolver2D):
         # GPU 메모리로 전송 (한 번만)
         V = xp.array(V_T)
 
+        # 관찰일 역방향 인덱스 초기화
+        obs_idx = len(self.product.observation_dates) - 1 if self.product is not None else -1
+
         # 시간 역방향 진행
         for n in range(self.Nt - 1, -1, -1):
             t = self.grid.t[n]
@@ -122,11 +132,10 @@ class ImprovedGPUADISolver(FDMSolver2D):
             if early_exercise_callback is not None:
                 if self.use_gpu and self.product is not None:
                     # ⚡ GPU vectorized callback (CPU 전송 없음!)
-                    # 관찰일 체크
-                    for obs_idx, obs_time in enumerate(self.product.observation_dates):
-                        if abs(t - obs_time) < 1e-6:  # 관찰일
-                            V = self.apply_early_redemption_gpu(V, obs_idx)
-                            break
+                    # Time step index로 정확히 체크 (CPU와 동일한 방식)
+                    if obs_idx >= 0 and n in self.obs_time_indices:
+                        V = self.apply_early_redemption_gpu(V, obs_idx)
+                        obs_idx -= 1
                 else:
                     # CPU fallback (기존 방식)
                     V_cpu = cp.asnumpy(V) if self.use_gpu else V
