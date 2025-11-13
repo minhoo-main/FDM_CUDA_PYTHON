@@ -33,7 +33,7 @@ class ImprovedGPUADISolver(FDMSolver2D):
 
     def __init__(self, grid: Grid2D, r: float, q1: float, q2: float,
                  sigma1: float, sigma2: float, rho: float,
-                 use_gpu: bool = True):
+                 use_gpu: bool = True, product=None):
         super().__init__(grid, r, q1, q2, sigma1, sigma2, rho)
 
         if not CUPY_AVAILABLE:
@@ -51,7 +51,12 @@ class ImprovedGPUADISolver(FDMSolver2D):
                     print("✓ Improved GPU 가속 활성화")
 
         self.xp = cp if (self.use_gpu and CUPY_AVAILABLE) else np
+        self.product = product  # ELS 상품 정보 저장
         self._precompute_coefficients()
+
+        # GPU용 메시 그리드 사전 계산
+        if self.use_gpu and product is not None:
+            self._precompute_gpu_meshes()
 
     def _precompute_coefficients(self):
         """ADI 계수를 GPU 메모리에 미리 계산"""
@@ -113,14 +118,22 @@ class ImprovedGPUADISolver(FDMSolver2D):
             # ADI Half-steps (개선된 batched solver 사용)
             V = self._adi_step_batched(V)
 
-            # 조기상환 체크 (필요시 CPU로)
+            # 조기상환 체크
             if early_exercise_callback is not None:
-                # TODO: GPU vectorized callback 구현
-                V_cpu = cp.asnumpy(V) if self.use_gpu else V
-                S1_mesh = self.grid.S1_mesh
-                S2_mesh = self.grid.S2_mesh
-                V_cpu = early_exercise_callback(V_cpu, S1_mesh, S2_mesh, n, t)
-                V = xp.array(V_cpu)
+                if self.use_gpu and self.product is not None:
+                    # ⚡ GPU vectorized callback (CPU 전송 없음!)
+                    # 관찰일 체크
+                    for obs_idx, obs_time in enumerate(self.product.observation_dates):
+                        if abs(t - obs_time) < 1e-6:  # 관찰일
+                            V = self.apply_early_redemption_gpu(V, obs_idx)
+                            break
+                else:
+                    # CPU fallback (기존 방식)
+                    V_cpu = cp.asnumpy(V) if self.use_gpu else V
+                    S1_mesh = self.grid.S1_mesh
+                    S2_mesh = self.grid.S2_mesh
+                    V_cpu = early_exercise_callback(V_cpu, S1_mesh, S2_mesh, n, t)
+                    V = xp.array(V_cpu)
 
         # 결과 반환 (GPU -> CPU)
         if self.use_gpu:
@@ -249,6 +262,52 @@ class ImprovedGPUADISolver(FDMSolver2D):
         # Linear extrapolation at S_max (vectorized!)
         V_new[-1, :] = 2 * V_new[-2, :] - V_new[-3, :]
         V_new[:, -1] = 2 * V_new[:, -2] - V_new[:, -3]
+
+        return V_new
+
+    def _precompute_gpu_meshes(self):
+        """GPU용 메시 그리드 사전 계산"""
+        xp = self.xp
+        # S1, S2 meshgrid를 GPU 메모리에 미리 올려놓기
+        self.S1_mesh_gpu = xp.array(self.grid.S1_mesh)
+        self.S2_mesh_gpu = xp.array(self.grid.S2_mesh)
+
+    def apply_early_redemption_gpu(self, V, obs_idx):
+        """
+        GPU vectorized 조기상환 조건 적용
+
+        Args:
+            V: (N1, N2) GPU 배열
+            obs_idx: 관찰일 인덱스
+
+        Returns:
+            업데이트된 V (N1, N2) GPU 배열
+        """
+        if self.product is None:
+            return V
+
+        xp = self.xp
+
+        # Worst-of 퍼포먼스 계산 (GPU에서 vectorized)
+        perf1 = self.S1_mesh_gpu / self.product.S1_0  # (N₁, N₂)
+        perf2 = self.S2_mesh_gpu / self.product.S2_0  # (N₁, N₂)
+
+        if self.product.worst_of:
+            worst_perf = xp.minimum(perf1, perf2)  # ⚡ GPU 병렬!
+        else:
+            worst_perf = xp.maximum(perf1, perf2)
+
+        # 조기상환 조건 체크 (vectorized)
+        barrier = self.product.redemption_barriers[obs_idx]
+        is_redeemed = worst_perf >= barrier  # (N₁, N₂) boolean 배열
+
+        # 조기상환 페이오프
+        coupon = self.product.coupons[obs_idx]
+        redemption_value = self.product.principal + coupon
+
+        # ⚡ GPU vectorized conditional update
+        # CPU 전송 없이 GPU에서 직접 처리!
+        V_new = xp.where(is_redeemed, redemption_value, V)
 
         return V_new
 
