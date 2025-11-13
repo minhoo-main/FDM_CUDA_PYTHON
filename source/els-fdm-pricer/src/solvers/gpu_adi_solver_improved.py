@@ -70,7 +70,7 @@ class ImprovedGPUADISolver(FDMSolver2D):
         xp = self.xp
         N1, N2 = self.N1, self.N2
         dS1, dS2 = self.grid.dS1, self.grid.dS2
-        dt = self.grid.dt / 2.0  # half time step
+        dt = self.grid.dt  # FULL time step (ADI "half-step"은 개념적인 것)
 
         S1 = self.grid.S1
         S2 = self.grid.S2
@@ -241,14 +241,14 @@ class ImprovedGPUADISolver(FDMSolver2D):
 
         # 나머지 행 (vectorized)
         for i in range(1, N-1):
-            denom = diag[i] - lower[i] * c[i-1, :]
+            denom = diag[i] - lower[i-1] * c[i-1, :]  # FIX: lower[i-1] not lower[i]
             c[i, :] = upper[i] / denom
-            d[i, :] = (RHS[i, :] - lower[i] * d[i-1, :]) / denom
+            d[i, :] = (RHS[i, :] - lower[i-1] * d[i-1, :]) / denom  # FIX: lower[i-1]
 
         # 마지막 행
         i = N - 1
-        denom = diag[i] - lower[i] * c[i-1, :]
-        d[i, :] = (RHS[i, :] - lower[i] * d[i-1, :]) / denom
+        denom = diag[i] - lower[i-1] * c[i-1, :]  # FIX: lower[i-1]
+        d[i, :] = (RHS[i, :] - lower[i-1] * d[i-1, :]) / denom  # FIX: lower[i-1]
 
         # Backward substitution (vectorized!)
         X = xp.zeros((N, M))
