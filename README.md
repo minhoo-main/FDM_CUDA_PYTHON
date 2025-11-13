@@ -70,13 +70,15 @@ els-pricing-gpu-project/
 │   └── WORK_COMPLETED.md                     # 작업 완료 내역
 │
 ├── notebooks/                         # Jupyter/Colab 노트북
-│   ├── ELS_GPU_Improved_Test.ipynb   # 개선된 GPU 테스트 (권장) ⭐
+│   ├── ELS_GPU_Vectorized_Test.ipynb  # GPU Vectorized 조기상환 (Phase 3) ⭐⭐
+│   ├── ELS_GPU_Improved_Test.ipynb   # 개선된 GPU 테스트 (Phase 2)
 │   ├── ELS_GPU_Colab_Fixed.ipynb     # GPU 테스트 (버그 수정)
 │   └── ELS_GPU_Colab_Drive.ipynb     # Google Drive 연동
 │
 └── packages/                          # 배포 패키지
-    ├── els-fdm-pricer-improved.tar.gz  # 개선 버전 (22KB) ⭐
-    └── els-fdm-pricer-colab.tar.gz     # 기본 버전 (21KB)
+    ├── els-fdm-pricer-vectorized.tar.gz  # Vectorized ER (61KB) ⭐⭐ NEW!
+    ├── els-fdm-pricer-improved.tar.gz    # 개선 버전 (22KB)
+    └── els-fdm-pricer-colab.tar.gz       # 기본 버전 (21KB)
 ```
 
 ---
@@ -104,27 +106,32 @@ print(f'ELS 가격: {result[\"price\"]:.4f}')
 
 ### 2. Google Colab GPU 테스트 (권장)
 
-#### 준비물
-1. `packages/els-fdm-pricer-improved.tar.gz` → Google Drive 업로드
-2. `notebooks/ELS_GPU_Improved_Test.ipynb` → Colab 업로드
+#### 준비물 (Phase 3 - 최신!)
+1. `packages/els-fdm-pricer-vectorized.tar.gz` → Google Drive 업로드 ⭐
+2. `notebooks/ELS_GPU_Vectorized_Test.ipynb` → Colab 업로드 ⭐
 
 #### 실행 순서
 ```
 1. colab.research.google.com 접속
-2. 노트북 업로드: ELS_GPU_Improved_Test.ipynb
-3. Runtime → Change runtime type → GPU
+2. 노트북 업로드: ELS_GPU_Vectorized_Test.ipynb
+3. Runtime → Change runtime type → GPU (T4)
 4. Runtime → Run all
 ```
 
-#### 예상 결과
+#### 예상 결과 (Phase 3)
 ```
-30×30×60:    CPU 0.15초 → GPU 0.05초 (3배)
-50×50×100:   CPU 0.89초 → GPU 0.08초 (11배)
-100×100×200: CPU 6.99초 → GPU 9.40초 (0.7배)
-200×200:     GPU가 CPU보다 빠름!
+50×50×100:   CPU 0.86초 → GPU 1.75초 (0.49×) - 오버헤드
+100×100×200: CPU 6.99초 → GPU 8.20초 (0.85×) - 격차 줄어듦
+150×150×300: CPU ~20초 → GPU ~17.5초 (1.13×) - GPU 빠름! ✓
+200×200×1000: CPU 78초 → GPU ~38초 (2.1×) - GPU 압도적! 🚀
 ```
 
-상세 가이드: `docs/COLAB_IMPROVED_GUIDE.md`
+**Phase 2와 비교:**
+- 조기상환 처리: CPU↔GPU 전송 제거!
+- 추가 향상: 5-15% 개선
+- 크로스오버: 150 → 140 그리드로 개선
+
+상세 가이드: `docs/GPU_VECTORIZED_EARLY_REDEMPTION.md`
 
 ---
 
